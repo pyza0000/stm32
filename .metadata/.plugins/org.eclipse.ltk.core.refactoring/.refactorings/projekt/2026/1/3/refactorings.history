@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">&#x0A;<refactoring comment="Rename resource &apos;projekt/Core/Inc/protocol&apos; to &apos;protocol.h&apos;" description="Rename resource &apos;protocol&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="Core/Inc/protocol" name="protocol.h" stamp="1768245763114" updateReferences="true"/>&#x0A;<refactoring comment="Rename resource &apos;projekt/Core/Src/protocol&apos; to &apos;protocol.c&apos;" description="Rename resource &apos;protocol&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="Core/Src/protocol" name="protocol.c" stamp="1768245783658" updateReferences="true"/>
+</session>

@@ -1,0 +1,474 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2025 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include "tim.h"
+#include "usart.h"
+#include "wwdg.h"
+#include "gpio.h"
+#include <string.h>
+#include <stdlib.h>
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+
+/* USER CODE BEGIN PV */
+uint8_t rx_byte;
+
+/* ===== tick z TIM3: 1ms ===== */
+static volatile uint32_t g_ms = 0;
+
+/* ===== Delay realizowany timerem ===== */
+static volatile uint32_t delay_ms = 0;
+
+/* ===== BLINK realizowany timerem ===== */
+static volatile uint32_t blink_half_ms = 0;
+static volatile uint32_t blink_cnt_ms = 0;
+
+/* ===== Watchdog + TX hang detection ===== */
+static volatile uint32_t last_tx_progress_ms = 0;
+#define TX_HANG_TIMEOUT_MS 500U
+
+/* ===== Bufory kołowe ===== */
+typedef struct {
+    volatile uint16_t start;
+    volatile uint16_t end;
+    uint16_t size;
+    uint8_t *tablica;
+} BuforKolowy;
+
+#define RX_BK_SIZE 256
+#define TX_BK_SIZE 256
+
+static uint8_t rx_mem[RX_BK_SIZE];
+static uint8_t tx_mem[TX_BK_SIZE];
+static BuforKolowy rx_bk;
+static BuforKolowy tx_bk;
+
+static volatile uint8_t tx_busy = 0;
+static uint8_t tx_byte;
+
+/* ===== Parser komend ===== */
+static char cmd_buf[64];
+static uint8_t cmd_idx = 0;
+
+/* ===== Kolejka komend (Delay blokuje wykonanie, ale RX dalej zbiera) ===== */
+#define CMD_Q_SIZE 8
+static char cmd_q[CMD_Q_SIZE][64];
+static volatile uint8_t cmd_q_w = 0;
+static volatile uint8_t cmd_q_r = 0;
+
+/* ===== Logika LED ===== */
+typedef enum { LED_MODE_OFF=0, LED_MODE_ON, LED_MODE_BLINK } led_mode_t;
+static volatile led_mode_t led_mode = LED_MODE_OFF;
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+static void trim_inplace(char *s)
+{
+    char *p = s;
+    while (*p == ' ' || *p == '\t') p++;
+    if (p != s) memmove(s, p, strlen(p) + 1);
+
+    size_t n = strlen(s);
+    while (n > 0 && (s[n-1] == ' ' || s[n-1] == '\t')) {
+        s[n-1] = '\0';
+        n--;
+    }
+}
+
+/* ===== Implementacja bufora kołowego (inline) ===== */
+static void bk_init(BuforKolowy *b, uint8_t *mem, uint16_t size)
+{
+    b->start = 0;
+    b->end = 0;
+    b->size = size;
+    b->tablica = mem;
+}
+
+static uint8_t bk_pop(BuforKolowy *b, uint8_t *out)
+{
+    if (b->start == b->end) return 0;
+    *out = b->tablica[b->start];
+    b->start = (uint16_t)((b->start + 1) % b->size);
+    return 1;
+}
+
+static uint8_t bk_push_isr(BuforKolowy *b, uint8_t v)
+{
+    uint16_t next = (uint16_t)((b->end + 1) % b->size);
+    if (next == b->start) return 0;
+    b->tablica[b->end] = v;
+    b->end = next;
+    return 1;
+}
+
+/* ===== TX nieblokujący ===== */
+static void uart_kick_tx_it(void)
+{
+    if (!tx_busy) {
+        uint8_t b;
+        __disable_irq();
+        if (bk_pop(&tx_bk, &b)) {
+            tx_busy = 1;
+            last_tx_progress_ms = g_ms;
+            tx_byte = b;
+            __enable_irq();
+            HAL_UART_Transmit_IT(&huart2, &tx_byte, 1);
+        } else {
+            __enable_irq();
+        }
+    }
+}
+
+static void uart_send_str(const char *s)
+{
+    while (*s) {
+        uint8_t ok;
+        __disable_irq();
+        ok = bk_push_isr(&tx_bk, (uint8_t)*s);
+        __enable_irq();
+
+        if (ok) {
+            s++;
+        } else {
+            uart_kick_tx_it();
+        }
+    }
+    uart_kick_tx_it();
+}
+
+/* ===== Obsługa komend ===== */
+static void cmd_error_unknown(void)
+{
+    uart_send_str("blad: komenda nie rozpoznana\r\n");
+}
+
+static void execute_command(const char *cmd)
+{
+    if (strcmp(cmd, "LED[ON]") == 0) {
+        led_mode = LED_MODE_ON;
+        HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET);
+        uart_send_str("OK\r\n");
+        return;
+    }
+
+    if (strcmp(cmd, "LED[OFF]") == 0) {
+        led_mode = LED_MODE_OFF;
+        HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
+        uart_send_str("OK\r\n");
+        return;
+    }
+
+    /* LED[Delay,x] */
+    if (strncmp(cmd, "LED[Delay,", 10) == 0) {
+        const char *p = cmd + 10;
+        int d = atoi(p);
+        const char *br = strchr(p, ']');
+
+        if (br == NULL || d < 0) {
+            uart_send_str("blad: zly format Delay\r\n");
+            return;
+        }
+
+        delay_ms = (uint32_t)d; /* odliczane w przerwaniu timera */
+        uart_send_str("OK\r\n");
+        return;
+    }
+
+    /* LED[BLINK,z]  z w Hz */
+    if (strncmp(cmd, "LED[BLINK,", 10) == 0) {
+        const char *p = cmd + 10;
+        int freq = atoi(p);
+        const char *br = strchr(p, ']');
+
+        if (br == NULL || freq <= 0) {
+            uart_send_str("blad: zly format BLINK\r\n");
+            return;
+        }
+
+        /* półokres w ms: 500/f */
+        uint32_t half = (uint32_t)(500U / (uint32_t)freq);
+        if (half < 10U) half = 10U;
+
+        blink_half_ms = half;
+        blink_cnt_ms = 0;
+
+        led_mode = LED_MODE_BLINK;
+        uart_send_str("OK\r\n");
+        return;
+    }
+
+    uart_send_str("blad: komenda nie rozpoznana\r\n");
+}
+
+
+/* ===== Parser: komendy kończą się ';' ===== */
+static void parser_feed(uint8_t ch)
+{
+    if (ch == ';') {
+        cmd_buf[cmd_idx] = '\0';
+        trim_inplace(cmd_buf);
+
+        if (cmd_buf[0] != '\0') {
+            if (!cmdq_push(cmd_buf)) {
+                uart_send_str("blad: kolejka komend pelna\r\n");
+            }
+        }
+
+        cmd_idx = 0;
+        return;
+    }
+
+    if (ch == '\r' || ch == '\n' || ch == 0x08 || ch == 0x7F) return;
+
+    if (cmd_idx < (sizeof(cmd_buf) - 1)) {
+        cmd_buf[cmd_idx++] = (char)ch;
+    } else {
+        cmd_idx = 0;
+        uart_send_str("blad: komenda za dluga\r\n");
+    }
+}
+static uint8_t cmdq_is_empty(void) { return (cmd_q_w == cmd_q_r); }
+
+static uint8_t cmdq_push(const char *s)
+{
+    uint8_t next = (uint8_t)((cmd_q_w + 1) % CMD_Q_SIZE);
+    if (next == cmd_q_r) return 0;
+
+    strncpy(cmd_q[cmd_q_w], s, sizeof(cmd_q[0]) - 1);
+    cmd_q[cmd_q_w][sizeof(cmd_q[0]) - 1] = '\0';
+    cmd_q_w = next;
+    return 1;
+}
+
+static uint8_t cmdq_pop(char *out)
+{
+    if (cmdq_is_empty()) return 0;
+
+    strncpy(out, cmd_q[cmd_q_r], 63);
+    out[63] = '\0';
+    cmd_q_r = (uint8_t)((cmd_q_r + 1) % CMD_Q_SIZE);
+    return 1;
+}
+
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_USART2_UART_Init();
+  MX_TIM6_Init();
+  MX_WWDG_Init();
+  /* USER CODE BEGIN 2 */
+  bk_init(&rx_bk, rx_mem, RX_BK_SIZE);
+  bk_init(&tx_bk, tx_mem, TX_BK_SIZE);
+
+  uart_send_str("Witaj, jestem Nucleo STM32!!!\r\n");
+
+  /* start odbioru 1 bajtu w przerwaniu */
+  HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+	  /* RX -> parser */
+	      uint8_t ch;
+	      while (bk_pop(&rx_bk, &ch)) {
+	          parser_feed(ch);
+	      }
+
+	      /* wykonuj kolejkę tylko gdy nie trwa Delay */
+	      if (delay_ms == 0) {
+	          char one_cmd[64];
+	          if (cmdq_pop(one_cmd)) {
+	              execute_command(one_cmd);
+	          }
+	      }
+
+	      /* watchdog: jak TX stoi za długo -> nie odświeżaj => reset */
+	      uint32_t now = g_ms;
+	      if (tx_busy) {
+	          if ((now - last_tx_progress_ms) <= TX_HANG_TIMEOUT_MS) {
+	              HAL_WWDG_Refresh(&hwwdg);
+	          } else {
+	              /* celowo NIC */
+	          }
+	      } else {
+	          HAL_WWDG_Refresh(&hwwdg);
+	      }}
+
+  /* USER CODE END 3 */
+}
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 16;
+  RCC_OscInitStruct.PLL.PLLN = 336;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
+  RCC_OscInitStruct.PLL.PLLQ = 2;
+  RCC_OscInitStruct.PLL.PLLR = 2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/* USER CODE BEGIN 4 */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM6) {
+        g_ms++;
+
+        if (delay_ms > 0) {
+            delay_ms--;
+        }
+
+        if (led_mode == LED_MODE_BLINK && blink_half_ms > 0) {
+            blink_cnt_ms++;
+            if (blink_cnt_ms >= blink_half_ms) {
+                blink_cnt_ms = 0;
+                HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+            }
+        }
+    }
+}
+
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+#ifdef USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */

@@ -1,0 +1,169 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) …
+  * All rights reserved.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include "ssd1306.h"
+#include "ssd1306_fonts.h"
+#include <stdio.h>
+/* USER CODE END Includes */
+
+/* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+UART_HandleTypeDef huart2;
+
+/* USER CODE BEGIN PV */
+uint8_t rx_byte;
+char oled_buffer[32];
+uint8_t oled_idx = 0;
+/* USER CODE END PV */
+
+/* USER CODE BEGIN 0 */
+/* =======================================================================
+   BME280 – pełna poprawna obsługa temperatury (z kalibracją)
+   ======================================================================= */
+
+#define BME280_ADDR (0x76 << 1)
+
+typedef struct {
+    uint16_t dig_T1;
+    int16_t dig_T2;
+    int16_t dig_T3;
+} BME280_CalibData;
+
+BME280_CalibData calib;
+int32_t t_fine;
+
+void BME280_ReadCalibration()
+{
+    uint8_t buf[6];
+    HAL_I2C_Mem_Read(&hi2c1, BME280_ADDR, 0x88, 1, buf, 6, 100);
+
+    calib.dig_T1 = (uint16_t)(buf[1] << 8 | buf[0]);
+    calib.dig_T2 = (int16_t)(buf[3] << 8 | buf[2]);
+    calib.dig_T3 = (int16_t)(buf[5] << 8 | buf[4]);
+}
+
+void BME280_Init()
+{
+    uint8_t reset = 0xB6;
+    HAL_I2C_Mem_Write(&hi2c1, BME280_ADDR, 0xE0, 1, &reset, 1, 100);
+    HAL_Delay(300);
+
+    uint8_t hum = 0x01;
+    HAL_I2C_Mem_Write(&hi2c1, BME280_ADDR, 0xF2, 1, &hum, 1, 100);
+
+    uint8_t ctrl = 0x27;
+    HAL_I2C_Mem_Write(&hi2c1, BME280_ADDR, 0xF4, 1, &ctrl, 1, 100);
+
+    BME280_ReadCalibration();
+}
+
+float BME280_ReadTemperature()
+{
+    uint8_t d[3];
+    HAL_I2C_Mem_Read(&hi2c1, BME280_ADDR, 0xFA, 1, d, 3, 100);
+
+    int32_t adc_T = ((int32_t)d[0] << 12) | ((int32_t)d[1] << 4) | (d[2] >> 4);
+
+    int32_t var1 = ((((adc_T >> 3) - ((int32_t)calib.dig_T1 << 1))) *
+                    ((int32_t)calib.dig_T2)) >> 11;
+
+    int32_t var2 = (((((adc_T >> 4) - ((int32_t)calib.dig_T1)) *
+                      ((adc_T >> 4) - ((int32_t)calib.dig_T1))) >> 12) *
+                    ((int32_t)calib.dig_T3)) >> 14;
+
+    t_fine = var1 + var2;
+
+    float temp = (t_fine * 5 + 128) >> 8;
+    return temp / 100.0f;
+}
+/* USER CODE END 0 */
+
+
+/* =======================================================================
+   MAIN
+   ======================================================================= */
+
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_I2C1_Init();
+  MX_USART2_UART_Init();
+
+  /* OLED INIT ========================================================= */
+  HAL_Delay(200);
+  ssd1306_Init();
+  ssd1306_Fill(Black);
+  ssd1306_SetCursor(0, 0);
+  ssd1306_WriteString("OLED+BME280", Font_11x18, White);
+  ssd1306_UpdateScreen();
+
+  /* BME280 INIT ====================================================== */
+  BME280_Init();
+  HAL_Delay(300);
+
+  /* UART interrupt start */
+  HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
+
+  /* MAIN LOOP ======================================================== */
+  while (1)
+  {
+      float temp = BME280_ReadTemperature();
+
+      char txt[32];
+      sprintf(txt, "Temp: %.2f C", temp);
+
+      ssd1306_Fill(Black);
+      ssd1306_SetCursor(0, 0);
+      ssd1306_WriteString(txt, Font_11x18, White);
+      ssd1306_UpdateScreen();
+
+      HAL_Delay(30000); // 30 sekund
+  }
+}
+
+
+/* =======================================================================
+   UART CALLBACK – zostaje jak było
+   ======================================================================= */
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2)
+    {
+        HAL_UART_Transmit(&huart2, &rx_byte, 1, 10);
+
+        if (rx_byte == '\r' || rx_byte == '\n')
+        {
+            oled_buffer[oled_idx] = 0;
+            ssd1306_Fill(Black);
+            ssd1306_SetCursor(0, 0);
+            ssd1306_WriteString(oled_buffer, Font_11x18, White);
+            ssd1306_UpdateScreen();
+            oled_idx = 0;
+        }
+        else if (oled_idx < sizeof(oled_buffer) - 1)
+        {
+            oled_buffer[oled_idx++] = rx_byte;
+        }
+
+        HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
+    }
+}

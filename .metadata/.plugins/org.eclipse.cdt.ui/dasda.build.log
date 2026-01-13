@@ -1,0 +1,10 @@
+21:49:07 **** Incremental Build of configuration Debug for project dasda ****
+make -j16 all 
+arm-none-eabi-size  dasda.elf 
+   text	   data	    bss	    dec	    hex	filename
+  16604	     92	   2060	  18756	   4944	dasda.elf
+Finished building: default.size.stdout
+ 
+
+21:49:07 Build Finished. 0 errors, 0 warnings. (took 247ms)
+
