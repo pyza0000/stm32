@@ -25,8 +25,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
 #include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -36,6 +37,48 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+/* ====== PROTOKÓŁ (ramki) ====== */
+#define START_BYTE 0x7E
+#define END_BYTE   0x7F
+#define ESC_BYTE   0x7D
+#define ESC_XOR    0x20
+
+#define ADDR_PC    0x01
+#define ADDR_STM   0x02
+
+/* Komendy */
+#define CMD_READ_NOW    0x10
+#define CMD_NOW_DATA    0x11
+#define CMD_SET_PERIOD  0x12
+#define CMD_RES_PERIOD  0x13
+#define CMD_GET_HISTORY 0x14
+#define CMD_HISTORY     0x15
+#define CMD_ACK         0x16
+#define CMD_NACK        0x17
+
+/* Błędy NACK */
+enum { ERR_CRC=0x01, ERR_FORMAT=0x02, ERR_PARAM=0x03, ERR_DEV=0x04, ERR_NODATA=0x05 };
+
+/* ====== RING BUF UART ====== */
+#define RX_RING_SIZE 1024
+#define TX_RING_SIZE 2048
+
+/* ====== Historia temperatury ====== */
+#define HIST_SIZE 400
+
+/* ====== Fragmentacja HISTORY ====== */
+/* 1 ramka: [seq][total][n][temps...] gdzie temp=int16 => 2*n bajtów */
+#define MAX_SAMPLES_PER_FRAME 126
+
+/* ====== BME280 ====== */
+#define BME280_ADDR   (0x76 << 1)   /* jeśli masz 0x77 -> zmień na (0x77<<1) */
+#define BME_REG_CALIB 0x88
+#define BME_REG_CTRL_HUM  0xF2
+#define BME_REG_STATUS    0xF3
+#define BME_REG_CTRL_MEAS 0xF4
+#define BME_REG_CONFIG    0xF5
+#define BME_REG_TEMP_MSB  0xFA
 
 /* USER CODE END PD */
 
@@ -47,308 +90,418 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-// ====== PROTOKÓŁ ======
-#define START_BYTE 0x7E
-#define END_BYTE   0x7F
-#define ESC_BYTE   0x7D
-#define ESC_XOR    0x20
-
-#define ADDR_PC    0x01
-#define ADDR_STM   0x02
-
-#define MAX_DATA   255
-
-// ====== RX RING ======
-#define RX_RING_SIZE 1024
-
+#define UART_RX_DMA_SIZE 256
+static uint8_t uart_rx_dma[UART_RX_DMA_SIZE];
+static uint16_t uart_rx_dma_old_pos = 0;
+/* ===== UART ring ===== */
 typedef struct {
     uint8_t buf[RX_RING_SIZE];
     volatile uint16_t head;
     volatile uint16_t tail;
-} ring_t;
+} ring_rx_t;
 
-static ring_t rxring;
-static uint8_t uart_rx_byte;
+typedef struct {
+    uint8_t buf[TX_RING_SIZE];
+    volatile uint16_t head;
+    volatile uint16_t tail;
+    volatile uint8_t  running;
+} ring_tx_t;
 
-// ====== Parser stanu ======
+static ring_rx_t rxring;
+static ring_tx_t txring;
+
+static uint8_t uart_tx_byte;
+
+/* ===== Parser stanu ===== */
 typedef enum { ST_WAIT_START, ST_IN_FRAME, ST_ESC } pstate_t;
 static pstate_t ps = ST_WAIT_START;
 
-// bufor na zdekodowane SRC..CRC (bez START/END)
-static uint8_t frame_buf[1+1+1+1 + MAX_DATA + 2]; // SRC DST CMD LEN DATA CRC(2)
+/* Bufor na zdekodowane bajty: SRC DST CMD LEN DATA CRC(2) */
+#define MAX_DATA 255
+static uint8_t frame_buf[1+1+1+1 + MAX_DATA + 2];
 static uint16_t frame_len = 0;
 
-// ====== Historia 400 próbek ======
-#define HIST_SIZE 400
+/* ===== Historia 400 próbek temperatury (°C*100) ===== */
 static int16_t hist[HIST_SIZE];
-static volatile uint16_t hist_head = 0;
+static volatile uint16_t hist_head  = 0;
 static volatile uint16_t hist_count = 0;
 
-// Ustawienia okresu
-static uint32_t period_ms = 60000; // 1 min default
-static uint8_t  log_mode  = 1;
+/* Ustawienia okresu */
+static uint32_t period_ms = 1000; /* domyślnie 1s */
+static uint8_t  log_mode  = 1;    /* 1=loguj do historii, 0=nie loguj */
 static uint32_t last_ms   = 0;
 
-// ====== BME280 DMA (szkielet) ======
-#define BME280_ADDR (0x76 << 1)     // jeśli masz 0x77, zmień na (0x77<<1)
-#define REG_TEMP_MSB 0xFA
+/* ===== BME280: kalibracja T i DMA odczyt ===== */
+typedef struct {
+    uint16_t dig_T1;
+    int16_t  dig_T2;
+    int16_t  dig_T3;
+    int32_t  t_fine;
+    uint8_t  ok;
+} bme280_cal_t;
 
-static uint8_t bme_rx[3];
+static bme280_cal_t bmeCal;
+
+static uint8_t bme_rx3[3];
 static volatile uint8_t bme_busy = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-// ===== RING =====
-static inline void ring_put(ring_t *r, uint8_t b)
-{
-    uint16_t next = (r->head + 1) % RX_RING_SIZE;
-    if (next != r->tail) {
-        r->buf[r->head] = b;
-        r->head = next;
+
+/* ======= Ring helpers ======= */
+static inline uint16_t rb_next(uint16_t i, uint16_t size){ i++; return (i>=size)?0:i; }
+
+static inline void rxring_put(uint8_t b){
+    uint16_t next = rb_next(rxring.head, RX_RING_SIZE);
+    if(next != rxring.tail){
+        rxring.buf[rxring.head] = b;
+        rxring.head = next;
     }
 }
 
-static inline int ring_get(ring_t *r, uint8_t *out)
-{
-    if (r->tail == r->head) return 0;
-    *out = r->buf[r->tail];
-    r->tail = (r->tail + 1) % RX_RING_SIZE;
+static inline int rxring_get(uint8_t *out){
+    if(rxring.tail == rxring.head) return 0;
+    *out = rxring.buf[rxring.tail];
+    rxring.tail = rb_next(rxring.tail, RX_RING_SIZE);
     return 1;
 }
 
-// ===== CRC-16/CCITT-FALSE =====
+static inline int txring_put(uint8_t b){
+    uint16_t next = rb_next(txring.head, TX_RING_SIZE);
+    if(next == txring.tail) return 0; /* overflow */
+    txring.buf[txring.head] = b;
+    txring.head = next;
+    return 1;
+}
+
+static inline int txring_get(uint8_t *out){
+    if(txring.tail == txring.head) return 0;
+    *out = txring.buf[txring.tail];
+    txring.tail = rb_next(txring.tail, TX_RING_SIZE);
+    return 1;
+}
+
+static void uart_tx_kick(void){
+    if(txring.running) return;
+    if(txring_get(&uart_tx_byte)){
+        txring.running = 1;
+        HAL_UART_Transmit_IT(&huart2, &uart_tx_byte, 1);
+    }
+}
+
+/* ===== CRC-16/CCITT-FALSE ===== */
 static uint16_t crc16_ccitt_false(const uint8_t *data, uint16_t len)
 {
     uint16_t crc = 0xFFFF;
     for (uint16_t i = 0; i < len; i++) {
         crc ^= (uint16_t)data[i] << 8;
         for (uint8_t b = 0; b < 8; b++) {
-            if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+            if (crc & 0x8000) crc = (uint16_t)((crc << 1) ^ 0x1021);
             else crc <<= 1;
         }
     }
     return crc;
 }
 
-// ===== UART SEND (blokująco na start) =====
-static void uart_send_bytes(const uint8_t *b, uint16_t n)
-{
-    HAL_UART_Transmit(&huart2, (uint8_t*)b, n, 1000);
-}
-
-static void send_escaped_byte(uint8_t b)
+/* ===== Protokół: escape do TX ring ===== */
+static void proto_put_escaped(uint8_t b)
 {
     if (b == START_BYTE || b == END_BYTE || b == ESC_BYTE) {
-        uint8_t out[2] = { ESC_BYTE, (uint8_t)(b ^ ESC_XOR) };
-        uart_send_bytes(out, 2);
+        (void)txring_put(ESC_BYTE);
+        (void)txring_put((uint8_t)(b ^ ESC_XOR));
     } else {
-        uart_send_bytes(&b, 1);
+        (void)txring_put(b);
     }
 }
 
-static void send_frame(uint8_t src, uint8_t dst, uint8_t cmd, const uint8_t *data, uint8_t dlen)
+/* ===== Protokół: wysyłka ramki (NIEBLOKUJĄCO, TX ring + IT) =====
+   Format (po dekodowaniu): [SRC][DST][CMD][LEN][DATA...][CRC_L][CRC_H]
+   CRC liczony po: SRC..DATA (czyli 4 + LEN bajtów), CRC-16/CCITT-FALSE, init=0xFFFF
+*/
+static void send_frame(uint8_t src, uint8_t dst, uint8_t cmd,
+                       const uint8_t *data, uint8_t dlen)
 {
-    uint8_t tmp[4 + MAX_DATA]; // SRC DST CMD LEN DATA
-    tmp[0]=src; tmp[1]=dst; tmp[2]=cmd; tmp[3]=dlen;
-    if (dlen) memcpy(&tmp[4], data, dlen);
+    if (dlen > MAX_DATA) dlen = MAX_DATA;
 
+    /* Zbuduj bufor do CRC: HDR + DATA */
+    uint8_t tmp[4 + MAX_DATA];
+    tmp[0] = src;
+    tmp[1] = dst;
+    tmp[2] = cmd;
+    tmp[3] = dlen;
+    if (dlen && data != NULL) {
+        memcpy(&tmp[4], data, dlen);
+    }
+
+    /* CRC po SRC..DATA */
     uint16_t crc = crc16_ccitt_false(tmp, (uint16_t)(4 + dlen));
     uint8_t crcL = (uint8_t)(crc & 0xFF);
     uint8_t crcH = (uint8_t)(crc >> 8);
 
-    uart_send_bytes((uint8_t[]){START_BYTE}, 1);
+    /* Do TX ring pakujemy całą ramkę z byte-stuffing */
+    __disable_irq();
 
-    for (uint16_t i=0; i<4+dlen; i++) send_escaped_byte(tmp[i]);
-    send_escaped_byte(crcL);
-    send_escaped_byte(crcH);
+    (void)txring_put(START_BYTE);
 
-    uart_send_bytes((uint8_t[]){END_BYTE}, 1);
+    for (uint16_t i = 0; i < (uint16_t)(4 + dlen); i++) {
+        proto_put_escaped(tmp[i]);
+    }
+    proto_put_escaped(crcL);
+    proto_put_escaped(crcH);
+
+    (void)txring_put(END_BYTE);
+
+    __enable_irq();
+
+    uart_tx_kick(); /* odpala TX IT jeśli nie leci */
 }
 
-// ===== Historia =====
-static void hist_push(int16_t t_x100)
-{
+
+static void send_ack(uint8_t dst, uint8_t acked_cmd){
+    uint8_t d[1] = { acked_cmd };
+    send_frame(ADDR_STM, dst, CMD_ACK, d, 1);
+}
+
+static void send_nack(uint8_t dst, uint8_t err, uint8_t bad_cmd){
+    uint8_t d[2] = { err, bad_cmd };
+    send_frame(ADDR_STM, dst, CMD_NACK, d, 2);
+}
+
+/* ===== Historia ===== */
+static void hist_push(int16_t t_x100){
     hist[hist_head] = t_x100;
     hist_head = (hist_head + 1) % HIST_SIZE;
-    if (hist_count < HIST_SIZE) hist_count++;
+    if(hist_count < HIST_SIZE) hist_count++;
 }
 
-static int16_t hist_get_offset(uint16_t offset)
-{
-    // offset=0 -> najnowsza
+static int16_t hist_get_offset(uint16_t offset){
+    /* offset=0 -> najnowsza */
+    if(hist_count == 0) return 0;
     uint16_t newest = (hist_head + HIST_SIZE - 1) % HIST_SIZE;
     uint16_t idx = (newest + HIST_SIZE - (offset % HIST_SIZE)) % HIST_SIZE;
     return hist[idx];
 }
 
-// ===== BME DMA start =====
-static void bme280_start_read_dma(void)
-{
-    if (bme_busy) return;
+/* ===== BME280: kompensacja temperatury (°C*100) ===== */
+static int16_t bme_comp_temp_x100(uint32_t adc_T){
+    int32_t var1, var2, T;
+
+    var1 = ((((int32_t)adc_T >> 3) - ((int32_t)bmeCal.dig_T1 << 1)) * ((int32_t)bmeCal.dig_T2)) >> 11;
+    var2 = (((((int32_t)adc_T >> 4) - ((int32_t)bmeCal.dig_T1)) * (((int32_t)adc_T >> 4) - ((int32_t)bmeCal.dig_T1))) >> 12);
+    var2 = (var2 * ((int32_t)bmeCal.dig_T3)) >> 14;
+
+    bmeCal.t_fine = var1 + var2;
+    T = (bmeCal.t_fine * 5 + 128) >> 8; /* 0.01°C */
+
+    if(T < -4000) T = -4000;
+    if(T >  8500) T =  8500;
+    return (int16_t)T;
+}
+
+static void bme_init_temp_only(void){
+    bmeCal.ok = 0;
+
+    /* Ustaw tryb pracy BME280 (wystarczy dla temp) */
+    uint8_t ctrl_hum = 0x00;
+    uint8_t config   = 0x00;
+    uint8_t ctrl_meas= 0x27; /* osrs_t=x1, osrs_p=x1, mode=normal */
+
+    if(HAL_I2C_Mem_Write(&hi2c1, BME280_ADDR, BME_REG_CTRL_HUM,  I2C_MEMADD_SIZE_8BIT, &ctrl_hum, 1, 200) != HAL_OK) return;
+    if(HAL_I2C_Mem_Write(&hi2c1, BME280_ADDR, BME_REG_CONFIG,    I2C_MEMADD_SIZE_8BIT, &config,   1, 200) != HAL_OK) return;
+    if(HAL_I2C_Mem_Write(&hi2c1, BME280_ADDR, BME_REG_CTRL_MEAS, I2C_MEMADD_SIZE_8BIT, &ctrl_meas,1, 200) != HAL_OK) return;
+
+    /* Odczyt kalibracji temperatury: 0x88..0x8D (6 bajtów) */
+    uint8_t cal[6];
+    if(HAL_I2C_Mem_Read(&hi2c1, BME280_ADDR, BME_REG_CALIB, I2C_MEMADD_SIZE_8BIT, cal, 6, 300) != HAL_OK) return;
+
+    bmeCal.dig_T1 = (uint16_t)cal[0] | ((uint16_t)cal[1] << 8);
+    bmeCal.dig_T2 = (int16_t)((uint16_t)cal[2] | ((uint16_t)cal[3] << 8));
+    bmeCal.dig_T3 = (int16_t)((uint16_t)cal[4] | ((uint16_t)cal[5] << 8));
+    bmeCal.ok = 1;
+}
+
+static void bme280_start_read_dma(void){
+    if(!bmeCal.ok) return;
+    if(bme_busy) return;
     bme_busy = 1;
-    HAL_I2C_Mem_Read_DMA(&hi2c1, BME280_ADDR, REG_TEMP_MSB, I2C_MEMADD_SIZE_8BIT, bme_rx, 3);
+
+    if(HAL_I2C_Mem_Read_DMA(&hi2c1, BME280_ADDR, BME_REG_TEMP_MSB, I2C_MEMADD_SIZE_8BIT, bme_rx3, 3) != HAL_OK){
+        bme_busy = 0;
+    }
 }
 
-// ===== NACK/ACK helpers =====
-enum { ERR_CRC=0x01, ERR_FORMAT=0x02, ERR_PARAM=0x03, ERR_DEV=0x04, ERR_NODATA=0x05 };
-
-static void send_ack(uint8_t dst, uint8_t acked_cmd)
-{
-    uint8_t d[1] = { acked_cmd };
-    send_frame(ADDR_STM, dst, 0x16, d, 1);
-}
-
-static void send_nack(uint8_t dst, uint8_t err, uint8_t bad_cmd)
-{
-    uint8_t d[2] = { err, bad_cmd };
-    send_frame(ADDR_STM, dst, 0x17, d, 2);
-}
-
-// ===== Fragmentacja HISTORY_DATA =====
-#define MAX_SAMPLES_PER_FRAME 126
-
-static void send_history(uint8_t pc_addr, uint16_t offset, uint16_t count)
-{
-    if (hist_count == 0) { send_nack(pc_addr, ERR_NODATA, 0x14); return; }
-    if (offset >= hist_count) { send_nack(pc_addr, ERR_PARAM, 0x14); return; }
-
-    if (count > hist_count) count = hist_count;
-    if (offset + count > hist_count) count = (uint16_t)(hist_count - offset);
+/* ===== HISTORY wysyłka (fragmentacja) ===== */
+static void send_history(uint8_t pc_addr, uint16_t offset, uint16_t count){
+    if(hist_count == 0){ send_nack(pc_addr, ERR_NODATA, CMD_GET_HISTORY); return; }
+    if(offset >= hist_count){ send_nack(pc_addr, ERR_PARAM, CMD_GET_HISTORY); return; }
+    if(count == 0 || count > HIST_SIZE){ send_nack(pc_addr, ERR_PARAM, CMD_GET_HISTORY); return; }
+    if(offset + count > hist_count) count = (uint16_t)(hist_count - offset);
 
     uint16_t total = (count + MAX_SAMPLES_PER_FRAME - 1) / MAX_SAMPLES_PER_FRAME;
 
     uint16_t sent = 0;
-    for (uint16_t seq=0; seq<total; seq++) {
+    for(uint16_t seq=0; seq<total; seq++){
         uint16_t n = (uint16_t)(count - sent);
-        if (n > MAX_SAMPLES_PER_FRAME) n = MAX_SAMPLES_PER_FRAME;
+        if(n > MAX_SAMPLES_PER_FRAME) n = MAX_SAMPLES_PER_FRAME;
 
         uint8_t d[3 + 2*MAX_SAMPLES_PER_FRAME];
         d[0] = (uint8_t)seq;
         d[1] = (uint8_t)total;
         d[2] = (uint8_t)n;
 
-        for (uint16_t i=0; i<n; i++) {
+        for(uint16_t i=0;i<n;i++){
             int16_t t = hist_get_offset((uint16_t)(offset + sent + i));
             d[3 + 2*i]     = (uint8_t)(t & 0xFF);
             d[3 + 2*i + 1] = (uint8_t)(t >> 8);
         }
 
-        send_frame(ADDR_STM, pc_addr, 0x15, d, (uint8_t)(3 + 2*n));
+        send_frame(ADDR_STM, pc_addr, CMD_HISTORY, d, (uint8_t)(3 + 2*n));
         sent += n;
     }
 }
 
-// ===== Dispatch komend =====
-static void protocol_handle_cmd(uint8_t src, uint8_t cmd, const uint8_t *data, uint8_t dlen)
-{
+/* ===== Dispatch komend ===== */
+static void protocol_handle_cmd(uint8_t src, uint8_t cmd, const uint8_t *data, uint8_t dlen){
+    if(src != ADDR_PC) return;
 
-    if (src != ADDR_PC) return;
+    switch(cmd){
+        case CMD_READ_NOW:{
+            int16_t t = (hist_count > 0) ? hist_get_offset(0) : 0;
+            uint8_t out[2] = { (uint8_t)(t & 0xFF), (uint8_t)(t >> 8) };
+            send_frame(ADDR_STM, ADDR_PC, CMD_NOW_DATA, out, 2);
+            send_ack(ADDR_PC, cmd);
+        } break;
 
-    switch (cmd) {
-    case 0x10: // READ_NOW
-    {
-        // na start: odeślij ostatnią znaną temperaturę, albo placeholder
-        int16_t t = (hist_count > 0) ? hist_get_offset(0) : 2500;
-        uint8_t d[2] = { (uint8_t)(t & 0xFF), (uint8_t)(t >> 8) };
-        send_frame(ADDR_STM, ADDR_PC, 0x11, d, 2);
-        send_ack(ADDR_PC, cmd);
-    } break;
+        case CMD_SET_PERIOD:{
+            if(dlen != 5){ send_nack(ADDR_PC, ERR_FORMAT, cmd); break; }
+            uint32_t p = (uint32_t)data[0] | ((uint32_t)data[1]<<8) | ((uint32_t)data[2]<<16) | ((uint32_t)data[3]<<24);
+            uint8_t m = data[4];
 
-    case 0x12: // SET_PERIOD
-    {
-        if (dlen != 5) { send_nack(ADDR_PC, ERR_FORMAT, cmd); break; }
-        uint32_t p = (uint32_t)data[0] | ((uint32_t)data[1]<<8) | ((uint32_t)data[2]<<16) | ((uint32_t)data[3]<<24);
-        uint8_t m = data[4];
-        if (p < 60000 || p > 1800000) { send_nack(ADDR_PC, ERR_PARAM, cmd); break; }
-        period_ms = p;
-        log_mode = m;
-        send_ack(ADDR_PC, cmd);
+            /* sensowne limity: 50ms..30min */
+            if(p < 50 || p > 1800000){ send_nack(ADDR_PC, ERR_PARAM, cmd); break; }
+            if(m > 1){ send_nack(ADDR_PC, ERR_PARAM, cmd); break; }
 
-        // RES_PERIOD (0x13)
-        uint8_t out[5] = { (uint8_t)(period_ms & 0xFF), (uint8_t)(period_ms>>8), (uint8_t)(period_ms>>16), (uint8_t)(period_ms>>24), log_mode };
-        send_frame(ADDR_STM, ADDR_PC, 0x13, out, 5);
-    } break;
+            period_ms = p;
+            log_mode = m;
 
-    case 0x14: // GET_HISTORY
-    {
-        if (dlen != 4) { send_nack(ADDR_PC, ERR_FORMAT, cmd); break; }
-        uint16_t offset = (uint16_t)(data[0] | (data[1]<<8));
-        uint16_t count  = (uint16_t)(data[2] | (data[3]<<8));
-        if (count == 0 || count > 400) { send_nack(ADDR_PC, ERR_PARAM, cmd); break; }
-        send_ack(ADDR_PC, cmd);
-        send_history(ADDR_PC, offset, count);
-    } break;
+            send_ack(ADDR_PC, cmd);
 
-    default:
-        send_nack(ADDR_PC, ERR_FORMAT, cmd);
-        break;
+            uint8_t out[5] = {
+                (uint8_t)(period_ms & 0xFF),
+                (uint8_t)(period_ms >> 8),
+                (uint8_t)(period_ms >> 16),
+                (uint8_t)(period_ms >> 24),
+                log_mode
+            };
+            send_frame(ADDR_STM, ADDR_PC, CMD_RES_PERIOD, out, 5);
+        } break;
+
+        case CMD_GET_HISTORY:{
+            if(dlen != 4){ send_nack(ADDR_PC, ERR_FORMAT, cmd); break; }
+            uint16_t offset = (uint16_t)(data[0] | (data[1]<<8));
+            uint16_t count  = (uint16_t)(data[2] | (data[3]<<8));
+            send_ack(ADDR_PC, cmd);
+            send_history(ADDR_PC, offset, count);
+        } break;
+
+        default:
+            send_nack(ADDR_PC, ERR_FORMAT, cmd);
+            break;
     }
 }
 
-// ===== Walidacja ramki po END =====
-static void protocol_on_frame(const uint8_t *frm, uint16_t len)
-{
-    if (len < 1+1+1+1+2) return;
+/* ===== Walidacja ramki po END ===== */
+static void protocol_on_frame(const uint8_t *frm, uint16_t len){
+    if(len < (1+1+1+1+2)) return;
 
     uint8_t src = frm[0];
     uint8_t dst = frm[1];
     uint8_t cmd = frm[2];
-    uint8_t dlen = frm[3];
+    uint8_t dlen= frm[3];
 
-    uint16_t expected = (uint16_t)(1+1+1+1 + dlen + 2);
-    if (expected != len) {
-        if (src == ADDR_PC) send_nack(ADDR_PC, ERR_FORMAT, cmd);
+    uint16_t expected = (uint16_t)(4 + dlen + 2);
+    if(expected != len){
+        if(src == ADDR_PC) send_nack(ADDR_PC, ERR_FORMAT, cmd);
         return;
     }
 
-    // adresowanie
-    if (dst != ADDR_STM) return;
+    if(dst != ADDR_STM) return;
 
     uint16_t rx_crc = (uint16_t)frm[len-2] | ((uint16_t)frm[len-1] << 8);
-    uint16_t calc = crc16_ccitt_false(frm, (uint16_t)(4 + dlen)); // SRC..DATA
+    uint16_t calc   = crc16_ccitt_false(frm, (uint16_t)(4 + dlen));
 
-    if (calc != rx_crc) {
-        if (src == ADDR_PC) send_nack(ADDR_PC, ERR_CRC, cmd);
+    if(calc != rx_crc){
+        if(src == ADDR_PC) send_nack(ADDR_PC, ERR_CRC, cmd);
         return;
     }
 
     protocol_handle_cmd(src, cmd, &frm[4], dlen);
 }
 
-// ===== Parser bajtów =====
-static void protocol_parse_byte(uint8_t b)
-{
-    if (ps == ST_WAIT_START) {
-        if (b == START_BYTE) { ps = ST_IN_FRAME; frame_len = 0; }
+/* ===== Parser bajtów ===== */
+static void protocol_parse_byte(uint8_t b){
+    if(ps == ST_WAIT_START){
+        if(b == START_BYTE){ ps = ST_IN_FRAME; frame_len = 0; }
         return;
     }
 
-    if (ps == ST_ESC) { b ^= ESC_XOR; ps = ST_IN_FRAME; }
-    else if (b == ESC_BYTE) { ps = ST_ESC; return; }
-    else if (b == START_BYTE) { frame_len = 0; ps = ST_IN_FRAME; return; }
-    else if (b == END_BYTE) {
-        if (frame_len >= 1+1+1+1+2) protocol_on_frame(frame_buf, frame_len);
+    if(ps == ST_ESC){
+        b ^= ESC_XOR;
+        ps = ST_IN_FRAME;
+    } else if(b == ESC_BYTE){
+        ps = ST_ESC;
+        return;
+    } else if(b == START_BYTE){
+        frame_len = 0;
+        ps = ST_IN_FRAME;
+        return;
+    } else if(b == END_BYTE){
+        if(frame_len >= (1+1+1+1+2)) protocol_on_frame(frame_buf, frame_len);
         ps = ST_WAIT_START;
         return;
     }
 
-    if (frame_len < sizeof(frame_buf)) frame_buf[frame_len++] = b;
+    if(frame_len < sizeof(frame_buf)) frame_buf[frame_len++] = b;
     else ps = ST_WAIT_START;
 }
 
-static void protocol_poll(void)
-{
+static void protocol_poll(void){
     uint8_t b;
-    while (ring_get(&rxring, &b)) protocol_parse_byte(b);
+    while(rxring_get(&b)) protocol_parse_byte(b);
 }
+static void uart_rx_dma_poll_to_ring(void)
+{
+    // DMA w trybie circular: NDTR mówi ile zostało do końca bufora.
+    // Aktualna pozycja zapisu = (SIZE - NDTR)
+    uint16_t pos = (uint16_t)(UART_RX_DMA_SIZE - __HAL_DMA_GET_COUNTER(huart2.hdmarx));
 
+    if (pos != uart_rx_dma_old_pos)
+    {
+        if (pos > uart_rx_dma_old_pos)
+        {
+            // jeden spójny kawałek
+            for (uint16_t i = uart_rx_dma_old_pos; i < pos; i++)
+                rxring_put(uart_rx_dma[i]);
+        }
+        else
+        {
+            // zawinięcie (koniec bufora -> początek)
+            for (uint16_t i = uart_rx_dma_old_pos; i < UART_RX_DMA_SIZE; i++)
+                rxring_put(uart_rx_dma[i]);
+            for (uint16_t i = 0; i < pos; i++)
+                rxring_put(uart_rx_dma[i]);
+        }
+
+        uart_rx_dma_old_pos = pos;
+    }
+}
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
 
 /* USER CODE END 0 */
 
@@ -385,13 +538,11 @@ int main(void)
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+  HAL_UART_Receive_DMA(&huart2, uart_rx_dma, UART_RX_DMA_SIZE);
+  __HAL_DMA_DISABLE_IT(huart2.hdmarx, DMA_IT_HT);
 
-  // start odbioru 1 bajt w przerwaniu
-  HAL_UART_Receive_IT(&huart2, &uart_rx_byte, 1);
-
-  // test: wypełnij bufor historią “na sucho”, żeby od razu GET_HISTORY działało
-  for (int i=0; i<200; i++) hist_push(2000 + i); // 20.00°C + rośnie
-
+  /* init BME280 (kalibracja + ustawienia) */
+  bme_init_temp_only();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -401,14 +552,15 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  protocol_poll();
+	  uart_rx_dma_poll_to_ring();
+    protocol_poll();
 
-	  // pomiar okresowy (na razie tylko start DMA, w callbacku zapis do bufora)
-	  uint32_t now = HAL_GetTick();
-	  if ((now - last_ms) >= period_ms) {
-	      last_ms = now;
-	      bme280_start_read_dma(); // nieblokująco DMA
-	  }
+    /* pomiar okresowy: start DMA, a zapis do historii w callbacku */
+    uint32_t now = HAL_GetTick();
+    if((now - last_ms) >= period_ms){
+        last_ms = now;
+        bme280_start_read_dma(); /* NIEBLOKUJĄCO + DMA */
+    }
   }
   /* USER CODE END 3 */
 }
@@ -462,25 +614,40 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-    if (huart->Instance == USART2) {
-        ring_put(&rxring, uart_rx_byte);
 
-        HAL_UART_Receive_IT(&huart2, &uart_rx_byte, 1);
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if(huart->Instance == USART2){
+        if(txring_get(&uart_tx_byte)){
+            HAL_UART_Transmit_IT(&huart2, &uart_tx_byte, 1);
+        } else {
+            txring.running = 0;
+        }
     }
 }
 
 void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
-    if (hi2c->Instance == I2C1) {
+    if(hi2c->Instance == I2C1){
         bme_busy = 0;
 
-        // TODO: tu docelowo przelicz raw z BME280 na temperaturę używając kalibracji
-        // Na start: placeholder + zapis do bufora
-        int16_t temp_x100 = 2500; // 25.00°C
+        /* raw adc_T = 20-bit */
+        uint32_t adc_T = ((uint32_t)bme_rx3[0] << 12) | ((uint32_t)bme_rx3[1] << 4) | ((uint32_t)bme_rx3[2] >> 4);
 
-        if (log_mode) hist_push(temp_x100);
+        int16_t temp_x100 = bme_comp_temp_x100(adc_T);
+
+        if(log_mode){
+            hist_push(temp_x100);
+        }
+    }
+}
+
+void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
+{
+    if(hi2c->Instance == I2C1){
+        bme_busy = 0;
+        /* opcjonalnie: send_nack(ADDR_PC, ERR_DEV, 0x00); */
     }
 }
 

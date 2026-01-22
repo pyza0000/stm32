@@ -436,3 +436,210 @@ Finished building: default.size.stdout
  
 Finished building: hgfhfghf.list
  
+23:14:36 **** Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+arm-none-eabi-gcc -o "hgfhfghf.elf" @"objects.list"   -mcpu=cortex-m4 -T"C:\Users\HAHHAHAHAHAHAH\Documents\x\hgfhfghf\STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="hgfhfghf.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+Finished building target: hgfhfghf.elf
+ 
+arm-none-eabi-size  hgfhfghf.elf 
+arm-none-eabi-objdump -h -S hgfhfghf.elf  > "hgfhfghf.list"
+   text	   data	    bss	    dec	    hex	filename
+  29676	     20	   6004	  35700	   8b74	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+Finished building: hgfhfghf.list
+ 
+23:28:38 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+../Core/Src/main.c:49:20: error: expected declaration specifiers or '...' before numeric constant
+   49 | #define ADDR_STM   0x02
+      |                    ^~~~
+../Core/Src/main.c:472:12: note: in expansion of macro 'ADDR_STM'
+  472 | send_frame(ADDR_STM, ADDR_PC, 0x55, (uint8_t*)"OK", 2);
+      |            ^~~~~~~~
+../Core/Src/main.c:48:20: error: expected declaration specifiers or '...' before numeric constant
+   48 | #define ADDR_PC    0x01
+      |                    ^~~~
+../Core/Src/main.c:472:22: note: in expansion of macro 'ADDR_PC'
+  472 | send_frame(ADDR_STM, ADDR_PC, 0x55, (uint8_t*)"OK", 2);
+      |                      ^~~~~~~
+../Core/Src/main.c:472:31: error: expected declaration specifiers or '...' before numeric constant
+  472 | send_frame(ADDR_STM, ADDR_PC, 0x55, (uint8_t*)"OK", 2);
+      |                               ^~~~
+../Core/Src/main.c:472:37: error: expected declaration specifiers or '...' before '(' token
+  472 | send_frame(ADDR_STM, ADDR_PC, 0x55, (uint8_t*)"OK", 2);
+      |                                     ^
+../Core/Src/main.c:472:53: error: expected declaration specifiers or '...' before numeric constant
+  472 | send_frame(ADDR_STM, ADDR_PC, 0x55, (uint8_t*)"OK", 2);
+      |                                                     ^
+make: *** [Core/Src/subdir.mk:46: Core/Src/main.o] Error 1
+"make -j16 all" terminated with exit code 2. Build might be incomplete.
+23:32:28 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+arm-none-eabi-gcc -o "hgfhfghf.elf" @"objects.list"   -mcpu=cortex-m4 -T"C:\Users\HAHHAHAHAHAHAH\Documents\x\hgfhfghf\STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="hgfhfghf.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+Finished building target: hgfhfghf.elf
+ 
+arm-none-eabi-size  hgfhfghf.elf 
+arm-none-eabi-objdump -h -S hgfhfghf.elf  > "hgfhfghf.list"
+   text	   data	    bss	    dec	    hex	filename
+  29736	     20	   6004	  35760	   8bb0	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+Finished building: hgfhfghf.list
+ 
+23:32:42 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-size  hgfhfghf.elf 
+   text	   data	    bss	    dec	    hex	filename
+  29736	     20	   6004	  35760	   8bb0	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+23:34:45 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-size  hgfhfghf.elf 
+   text	   data	    bss	    dec	    hex	filename
+  29736	     20	   6004	  35760	   8bb0	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+23:44:27 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+arm-none-eabi-gcc -o "hgfhfghf.elf" @"objects.list"   -mcpu=cortex-m4 -T"C:\Users\HAHHAHAHAHAHAH\Documents\x\hgfhfghf\STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="hgfhfghf.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+Finished building target: hgfhfghf.elf
+ 
+arm-none-eabi-size  hgfhfghf.elf 
+arm-none-eabi-objdump -h -S hgfhfghf.elf  > "hgfhfghf.list"
+   text	   data	    bss	    dec	    hex	filename
+  29676	     20	   6004	  35700	   8b74	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+Finished building: hgfhfghf.list
+ 
+23:45:10 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-size  hgfhfghf.elf 
+   text	   data	    bss	    dec	    hex	filename
+  29676	     20	   6004	  35700	   8b74	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+23:47:15 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+arm-none-eabi-gcc -o "hgfhfghf.elf" @"objects.list"   -mcpu=cortex-m4 -T"C:\Users\HAHHAHAHAHAHAH\Documents\x\hgfhfghf\STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="hgfhfghf.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+Finished building target: hgfhfghf.elf
+ 
+arm-none-eabi-size  hgfhfghf.elf 
+arm-none-eabi-objdump -h -S hgfhfghf.elf  > "hgfhfghf.list"
+   text	   data	    bss	    dec	    hex	filename
+  29676	     20	   6004	  35700	   8b74	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+Finished building: hgfhfghf.list
+ 
+23:47:36 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-size  hgfhfghf.elf 
+   text	   data	    bss	    dec	    hex	filename
+  29676	     20	   6004	  35700	   8b74	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+23:59:54 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-gcc "../Core/Src/dma.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/dma.d" -MT"Core/Src/dma.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/dma.o"
+arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+arm-none-eabi-gcc "../Core/Src/stm32f4xx_it.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/stm32f4xx_it.d" -MT"Core/Src/stm32f4xx_it.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/stm32f4xx_it.o"
+arm-none-eabi-gcc "../Core/Src/usart.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/usart.d" -MT"Core/Src/usart.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/usart.o"
+../Core/Src/main.c: In function 'uart_rx_dma_poll_to_ring':
+../Core/Src/main.c:166:17: warning: implicit declaration of function 'rxring_put' [-Wimplicit-function-declaration]
+  166 |                 rxring_put(uart_rx_dma[i]);
+      |                 ^~~~~~~~~~
+../Core/Src/main.c: At top level:
+../Core/Src/main.c:183:20: warning: conflicting types for 'rxring_put'; have 'void(uint8_t)' {aka 'void(unsigned char)'}
+  183 | static inline void rxring_put(uint8_t b){
+      |                    ^~~~~~~~~~
+../Core/Src/main.c:183:20: error: static declaration of 'rxring_put' follows non-static declaration
+../Core/Src/main.c:166:17: note: previous implicit declaration of 'rxring_put' with type 'void(uint8_t)' {aka 'void(unsigned char)'}
+  166 |                 rxring_put(uart_rx_dma[i]);
+      |                 ^~~~~~~~~~
+../Core/Src/main.c:113:16: warning: 'uart_rx_byte' defined but not used [-Wunused-variable]
+  113 | static uint8_t uart_rx_byte;
+      |                ^~~~~~~~~~~~
+make: *** [Core/Src/subdir.mk:46: Core/Src/main.o] Error 1
+make: *** Waiting for unfinished jobs....
+"make -j16 all" terminated with exit code 2. Build might be incomplete.
+00:01:31 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+../Core/Src/main.c:113:16: warning: 'uart_rx_byte' defined but not used [-Wunused-variable]
+  113 | static uint8_t uart_rx_byte;
+      |                ^~~~~~~~~~~~
+arm-none-eabi-gcc -o "hgfhfghf.elf" @"objects.list"   -mcpu=cortex-m4 -T"C:\Users\HAHHAHAHAHAHAH\Documents\x\hgfhfghf\STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="hgfhfghf.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+Finished building target: hgfhfghf.elf
+ 
+arm-none-eabi-size  hgfhfghf.elf 
+arm-none-eabi-objdump -h -S hgfhfghf.elf  > "hgfhfghf.list"
+   text	   data	    bss	    dec	    hex	filename
+  30768	     20	   6356	  37144	   9118	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+Finished building: hgfhfghf.list
+ 
+00:02:22 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+arm-none-eabi-gcc -o "hgfhfghf.elf" @"objects.list"   -mcpu=cortex-m4 -T"C:\Users\HAHHAHAHAHAHAH\Documents\x\hgfhfghf\STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="hgfhfghf.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+Finished building target: hgfhfghf.elf
+ 
+arm-none-eabi-size  hgfhfghf.elf 
+arm-none-eabi-objdump -h -S hgfhfghf.elf  > "hgfhfghf.list"
+   text	   data	    bss	    dec	    hex	filename
+  30768	     20	   6356	  37144	   9118	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+Finished building: hgfhfghf.list
+ 
+00:02:26 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-size  hgfhfghf.elf 
+   text	   data	    bss	    dec	    hex	filename
+  30768	     20	   6356	  37144	   9118	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+00:02:42 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-size  hgfhfghf.elf 
+   text	   data	    bss	    dec	    hex	filename
+  30768	     20	   6356	  37144	   9118	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+00:06:28 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+arm-none-eabi-gcc -o "hgfhfghf.elf" @"objects.list"   -mcpu=cortex-m4 -T"C:\Users\HAHHAHAHAHAHAH\Documents\x\hgfhfghf\STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="hgfhfghf.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+Finished building target: hgfhfghf.elf
+ 
+arm-none-eabi-size  hgfhfghf.elf 
+arm-none-eabi-objdump -h -S hgfhfghf.elf  > "hgfhfghf.list"
+   text	   data	    bss	    dec	    hex	filename
+  30860	     20	   6356	  37236	   9174	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+Finished building: hgfhfghf.list
+ 
+00:06:32 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-size  hgfhfghf.elf 
+   text	   data	    bss	    dec	    hex	filename
+  30860	     20	   6356	  37236	   9174	hgfhfghf.elf
+Finished building: default.size.stdout
+ 
+00:06:46 **** Incremental Build of configuration Debug for project hgfhfghf ****
+make -j16 all 
+arm-none-eabi-size  hgfhfghf.elf 
+   text	   data	    bss	    dec	    hex	filename
+  30860	     20	   6356	  37236	   9174	hgfhfghf.elf
+Finished building: default.size.stdout
+ 

@@ -3,6 +3,7 @@
 	<item key="hasShownOverlayPopupBefore" value="true"/>
 	<item key="replaceBarOpen" value="false"/>
 	<list key="searchhistory">
+		<item value="while()"/>
 		<item value="while(1)"/>
 		<item value="handle_command()"/>
 		<item value="handle_command"/>
@@ -17,6 +18,5 @@
 		<item value="while"/>
 		<item value="USER CODE BEGIN 4"/>
 		<item value="2"/>
-		<item value="4"/>
 	</list>
 </section>
